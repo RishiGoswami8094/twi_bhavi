@@ -6,7 +6,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const twilio = require('twilio');
 const session = require('express-session');
-const MongoStore = require('connect-mongo');
+const MongoStore = require('connect-mongo').default;
 const Message = require('./models/Message');
 const User = require('./models/User');
 
