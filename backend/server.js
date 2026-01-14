@@ -32,6 +32,9 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Trust proxy (needed for Railway/Heroku to detect HTTPS)
+app.set('trust proxy', 1);
+
 // Session configuration for authentication
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key-change-in-production',
@@ -44,6 +47,7 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === 'production', // true in production with HTTPS
     httpOnly: true,
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' required for cross-site cookies
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
