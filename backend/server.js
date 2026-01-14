@@ -6,6 +6,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const twilio = require('twilio');
 const session = require('express-session');
+const MongoStore = require('connect-mongo');
 const Message = require('./models/Message');
 const User = require('./models/User');
 
@@ -36,8 +37,12 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGODB_URI || 'mongodb://localhost:27017/twilio_chat',
+    ttl: 24 * 60 * 60 // 24 hours
+  }),
   cookie: {
-    secure: false, // Set to true in production with HTTPS
+    secure: process.env.NODE_ENV === 'production', // true in production with HTTPS
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
