@@ -19,14 +19,14 @@ if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "https://twibhavi-production.up.railway.app" }
+  cors: { origin: ["https://twibhavi-production.up.railway.app", "https://twili.netlify.app", "http://localhost:5173"] }
 });
 
 console.log("process.env.TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN, process.env.TWILIO_PHONE_NUMBER);
 
 
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: ['https://twibhavi-production.up.railway.app', 'https://twili.netlify.app', 'http://localhost:5173'],
   credentials: true
 }));
 app.use(express.json());
