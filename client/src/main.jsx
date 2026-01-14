@@ -6,7 +6,7 @@ import './index.css'
 import App from './App.jsx'
 import Login from './Login.jsx'
 
-const BACKEND_URL = 'http://localhost:5000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
 function Root() {
   const [isAuthenticated, setIsAuthenticated] = useState(null); // null = loading

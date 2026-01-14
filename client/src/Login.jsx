@@ -2,6 +2,8 @@ import { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+
 const Login = ({ setIsAuthenticated }) => {
     const [isRegistering, setIsRegistering] = useState(false);
     const [username, setUsername] = useState('');
@@ -15,7 +17,7 @@ const Login = ({ setIsAuthenticated }) => {
         const endpoint = isRegistering ? '/api/register' : '/api/login';
 
         try {
-            await axios.post(`http://localhost:5000${endpoint}`,
+            await axios.post(`${BACKEND_URL}${endpoint}`,
                 { username, password },
                 { withCredentials: true }
             );

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import axios from 'axios';
 
-const BACKEND_URL = 'http://localhost:5000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 const socket = io(BACKEND_URL);
 
 function App({ setIsAuthenticated }) {
