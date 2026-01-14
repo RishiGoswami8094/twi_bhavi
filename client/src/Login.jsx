@@ -30,37 +30,37 @@ const Login = ({ setIsAuthenticated }) => {
 
     return (
         <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-            <div className="bg-gray-800 p-8 rounded-lg shadow-lg w-96 border border-gray-700">
-                <h2 className="text-2xl font-bold mb-6 text-center text-blue-400">
+            <div className="bg-gray-800 p-10 shadow-lg w-96 border border-gray-700">
+                <h2 className="text-2xl font-bold mb-8 text-center text-blue-400">
                     {isRegistering ? 'Register' : 'Login'}
                 </h2>
-                {error && <div className="bg-red-900 text-red-200 p-2 rounded mb-4 text-sm text-center">{error}</div>}
-                <form onSubmit={handleSubmit} className="space-y-4">
+                {error && <div className="bg-red-900 text-red-200 px-4 py-3 mb-6 text-sm text-center">{error}</div>}
+                <form onSubmit={handleSubmit} className="space-y-6">
                     <div>
-                        <label className="block text-sm text-gray-400 mb-1">Username</label>
+                        <label className="block text-sm text-gray-400 mb-2">Username</label>
                         <input
                             type="text"
-                            className="w-full bg-gray-700 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full bg-gray-700 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             required
                         />
                     </div>
                     <div>
-                        <label className="block text-sm text-gray-400 mb-1">Password</label>
+                        <label className="block text-sm text-gray-400 mb-2">Password</label>
                         <input
                             type="password"
-                            className="w-full bg-gray-700 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full bg-gray-700 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
                         />
                     </div>
-                    <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold transition">
+                    <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 px-4 py-3 mt-4 font-bold transition">
                         {isRegistering ? 'Sign Up' : 'Sign In'}
                     </button>
                 </form>
-                <p className="mt-4 text-center text-sm text-gray-400">
+                {/* <p className="mt-4 text-center text-sm text-gray-400">
                     {isRegistering ? "Already have an account?" : "Don't have an account?"}
                     <button
                         onClick={() => setIsRegistering(!isRegistering)}
@@ -68,7 +68,12 @@ const Login = ({ setIsAuthenticated }) => {
                     >
                         {isRegistering ? 'Login' : 'Register'}
                     </button>
+                </p> */}
+
+                <p className="mt-4 text-center text-sm text-gray-400">
+                    {isRegistering ? "" : ""}
                 </p>
+
             </div>
         </div>
     );
