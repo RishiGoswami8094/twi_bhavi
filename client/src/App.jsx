@@ -402,7 +402,7 @@ function App({ setIsAuthenticated }) {
       {/* Settings Modal */}
       {settingsOpen && (
         <div
-          style={{ background: "rgba(0, 0, 0, 0.7)" }}
+          style={{ background: "rgba(255, 255, 255, 0.7)" }}
           className='w-full h-full fixed inset-0 z-50 flex justify-center items-center'
           onClick={(e) => { if (e.target === e.currentTarget) setSettingsOpen(false); }}
         >
