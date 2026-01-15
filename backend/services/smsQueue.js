@@ -1,26 +1,15 @@
 const { Queue, Worker } = require('bullmq');
 const twilio = require('twilio');
+const IORedis = require('ioredis');
 
-// Redis connection config - supports Railway's REDIS_URL or individual host/port
-const getRedisConnection = () => {
-    // Railway provides REDIS_URL, use it if available
-    if (process.env.REDIS_URL) {
-        return process.env.REDIS_URL;
-    }
-
-    // Fallback to individual host/port for local development
-    return {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: process.env.REDIS_PORT || 6379,
-        maxRetriesPerRequest: null
-    };
-};
-
-const redisConnection = getRedisConnection();
+// Redis connection using IORedis
+const connection = new IORedis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null
+});
 
 // Create the SMS queue
 const smsQueue = new Queue('sms-sending', {
-    connection: redisConnection,
+    connection,
     defaultJobOptions: {
         attempts: 3,
         backoff: {
@@ -107,7 +96,7 @@ function setupSmsWorker(io) {
             throw error;
         }
     }, {
-        connection: redisConnection,
+        connection,
         concurrency: 1, // Process one SMS at a time to avoid rate limits
         limiter: {
             max: 1,
