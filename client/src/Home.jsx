@@ -1,14 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import axios from 'axios';
+import CsvUploadModal from './CsvUploadModal';
 
 const BACKEND_URL = 'http://localhost:5000';
 const socket = io(BACKEND_URL);
 
 function Home({ handleLogout }) {
+  const [phoneNumbers, setPhoneNumbers] = useState([]);
+  const [currentPhoneIndex, setCurrentPhoneIndex] = useState(0);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [messageBody, setMessageBody] = useState('');
   const [messages, setMessages] = useState([]);
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   
   // Status is now an object to handle types (success vs error)
   const [status, setStatus] = useState({ type: '', msg: '' }); 
@@ -28,6 +32,13 @@ function Home({ handleLogout }) {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Update phone number when phoneNumbers array or currentPhoneIndex changes
+  useEffect(() => {
+    if (phoneNumbers.length > 0 && currentPhoneIndex < phoneNumbers.length) {
+      setPhoneNumber(phoneNumbers[currentPhoneIndex]);
+    }
+  }, [phoneNumbers, currentPhoneIndex]);
+
   const fetchHistory = async () => {
     try {
       const res = await axios.get(`${BACKEND_URL}/api/messages`, { withCredentials: true });
@@ -39,6 +50,41 @@ function Home({ handleLogout }) {
         window.location.reload(); 
       }
     }
+  };
+
+  // Handle CSV upload success
+  const handleCsvUploadSuccess = (numbers) => {
+    if (numbers && numbers.length > 0) {
+      setPhoneNumbers(numbers);
+      setCurrentPhoneIndex(0);
+      setPhoneNumber(numbers[0]);
+      setStatus({ 
+        type: 'success', 
+        msg: `Loaded ${numbers.length} phone numbers from CSV` 
+      });
+      setTimeout(() => setStatus({ type: '', msg: '' }), 3000);
+    }
+  };
+
+  // Navigate to next phone number
+  const handleNextNumber = () => {
+    if (currentPhoneIndex < phoneNumbers.length - 1) {
+      setCurrentPhoneIndex(currentPhoneIndex + 1);
+    }
+  };
+
+  // Navigate to previous phone number
+  const handlePrevNumber = () => {
+    if (currentPhoneIndex > 0) {
+      setCurrentPhoneIndex(currentPhoneIndex - 1);
+    }
+  };
+
+  // Clear all loaded phone numbers
+  const handleClearNumbers = () => {
+    setPhoneNumbers([]);
+    setCurrentPhoneIndex(0);
+    setPhoneNumber('');
   };
 
   const handleSend = async (e) => {
@@ -73,7 +119,15 @@ function Home({ handleLogout }) {
     <div className="min-h-screen bg-gray-900 text-white font-sans p-10 flex flex-col items-center">
       <div className="w-full max-w-5xl flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold text-blue-400">Twilio SMS Panel</h1>
-        <button onClick={handleLogout} className="bg-red-600 hover:bg-red-500 px-4 py-2 rounded text-sm font-semibold">Logout</button>
+        <div className="flex gap-3">
+          <button 
+            onClick={() => setIsCsvModalOpen(true)} 
+            className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-semibold flex items-center gap-2"
+          >
+            📄 Upload CSV
+          </button>
+          <button onClick={handleLogout} className="bg-red-600 hover:bg-red-500 px-4 py-2 rounded text-sm font-semibold">Logout</button>
+        </div>
       </div>
 
       <div className="flex w-full max-w-5xl gap-6 h-[80vh]">
@@ -83,7 +137,14 @@ function Home({ handleLogout }) {
           <h2 className="text-xl font-semibold mb-4">Compose Message</h2>
           <form onSubmit={handleSend} className="space-y-4">
             <div>
-              <label className="block text-sm text-gray-400 mb-1">To (Phone Number)</label>
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-sm text-gray-400">To (Phone Number)</label>
+                {phoneNumbers.length > 0 && (
+                  <span className="text-xs text-blue-400">
+                    {currentPhoneIndex + 1} / {phoneNumbers.length}
+                  </span>
+                )}
+              </div>
               <input 
                 type="text" 
                 placeholder="+1234567890" 
@@ -92,6 +153,37 @@ function Home({ handleLogout }) {
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 required
               />
+              
+              {/* Navigation controls for CSV numbers */}
+              {phoneNumbers.length > 0 && (
+                <div className="flex items-center justify-between mt-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrevNumber}
+                    disabled={currentPhoneIndex === 0}
+                    className="flex-1 bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    ← Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextNumber}
+                    disabled={currentPhoneIndex >= phoneNumbers.length - 1}
+                    className="flex-1 bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next →
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearNumbers}
+                    className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-sm"
+                    title="Clear all loaded numbers"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+              
               <p className="text-xs text-gray-500 mt-1">Must include country code (e.g., +1 or +91)</p>
             </div>
             <div>
@@ -157,6 +249,13 @@ function Home({ handleLogout }) {
         </div>
 
       </div>
+
+      {/* CSV Upload Modal */}
+      <CsvUploadModal
+        isOpen={isCsvModalOpen}
+        onClose={() => setIsCsvModalOpen(false)}
+        onSuccess={handleCsvUploadSuccess}
+      />
     </div>
   );
 }

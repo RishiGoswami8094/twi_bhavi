@@ -9,19 +9,83 @@ function App({ setIsAuthenticated }) {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [messageBody, setMessageBody] = useState('');
   const [messages, setMessages] = useState([]);
-  
+
   // Status is now an object to handle types (success vs error)
-  const [status, setStatus] = useState({ type: '', msg: '' }); 
+  const [status, setStatus] = useState({ type: '', msg: '' });
   const chatEndRef = useRef(null);
+
+  // CSV Upload states
+  const [csv_window_opened, set_csv_window_opened] = useState(false);
+  const [csvFile, setCSVFile] = useState(null);
+  const [csvLogs, setCsvLogs] = useState([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [phoneNumbers, setPhoneNumbers] = useState([]);
+  const [currentPhoneIndex, setCurrentPhoneIndex] = useState(0);
+
+  // SMS Logs panel states
+  const [smsLogsOpen, setSmsLogsOpen] = useState(false);
+  const [smsQueue, setSmsQueue] = useState([]); // Current queue of pending SMS
+  const [isSendingBulk, setIsSendingBulk] = useState(false);
+
+  // Add log entry
+  const addLog = (message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString();
+    setCsvLogs(prev => [...prev, { message, type, timestamp }]);
+  };
+
+  // Clear logs
+  const clearLogs = () => {
+    setCsvLogs([]);
+  };
 
   useEffect(() => {
     fetchHistory();
 
+    // Listen for SMS updates
     socket.on('sms_update', (newMessage) => {
       setMessages((prev) => [...prev, newMessage]);
     });
 
-    return () => socket.off('sms_update');
+    // Listen for batch queued event
+    socket.on('sms_batch_queued', (data) => {
+      console.log('Batch queued:', data);
+      setSmsQueue(data.jobs.map(j => ({ ...j, status: 'queued' })));
+      setSmsLogsOpen(true);
+    });
+
+    // Listen for job started event
+    socket.on('sms_job_started', (data) => {
+      console.log('Job started:', data);
+      setSmsQueue(prev => prev.map(item =>
+        item.phoneNumber === data.phoneNumber
+          ? { ...item, status: 'sending' }
+          : item
+      ));
+    });
+
+    // Listen for job completed event
+    socket.on('sms_job_completed', (data) => {
+      console.log('Job completed:', data);
+      setSmsQueue(prev => prev.filter(item => item.phoneNumber !== data.phoneNumber));
+    });
+
+    // Listen for job failed event
+    socket.on('sms_job_failed', (data) => {
+      console.log('Job failed:', data);
+      setSmsQueue(prev => prev.map(item =>
+        item.phoneNumber === data.phoneNumber
+          ? { ...item, status: 'failed', error: data.error }
+          : item
+      ));
+    });
+
+    return () => {
+      socket.off('sms_update');
+      socket.off('sms_batch_queued');
+      socket.off('sms_job_started');
+      socket.off('sms_job_completed');
+      socket.off('sms_job_failed');
+    };
   }, []);
 
   useEffect(() => {
@@ -30,7 +94,7 @@ function App({ setIsAuthenticated }) {
 
   const fetchHistory = async () => {
     try {
-      const res = await axios.get(`${BACKEND_URL}/api/messages`);
+      const res = await axios.get(`${BACKEND_URL}/api/messages`, { withCredentials: true });
       setMessages(res.data);
     } catch (err) {
       console.error("Could not fetch history", err);
@@ -46,93 +110,401 @@ function App({ setIsAuthenticated }) {
     }
   };
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    setStatus({ type: 'info', msg: 'Sending...' });
+  // Handle CSV file upload
+  const handleCsvUpload = async () => {
+    if (!csvFile) {
+      addLog('Please select a CSV file first', 'error');
+      return;
+    }
+
+    setIsUploading(true);
+    clearLogs();
+    addLog('Starting upload...', 'info');
+
+    const formData = new FormData();
+    formData.append('csvFile', csvFile);
 
     try {
-      await axios.post(`${BACKEND_URL}/api/send-sms`, {
-        to: phoneNumber,
-        body: messageBody
-      });
-      
-      setMessageBody('');
-      setStatus({ type: 'success', msg: 'Message Sent!' });
-      
-      // Clear success message after 3 seconds
-      setTimeout(() => setStatus({ type: '', msg: '' }), 3000);
+      addLog('Uploading file to server...', 'info');
 
+      const response = await axios.post(
+        `${BACKEND_URL}/api/upload-csv`,
+        formData,
+        {
+          withCredentials: true,
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        }
+      );
+
+      if (response.data.success) {
+        addLog(`✓ File processed successfully!`, 'success');
+        addLog(`Column mapping detected by AI:`, 'info');
+
+        const mapping = response.data.columnMapping;
+        if (mapping.firstName) addLog(`  • First Name: Column ${mapping.firstName}`, 'info');
+        if (mapping.lastName) addLog(`  • Last Name: Column ${mapping.lastName}`, 'info');
+        if (mapping.companyName) addLog(`  • Company: Column ${mapping.companyName}`, 'info');
+        if (mapping.phoneNumber) addLog(`  • Phone: Column ${mapping.phoneNumber}`, 'info');
+
+        addLog(`Total rows processed: ${response.data.processedRows}`, 'success');
+        addLog(`Phone numbers extracted: ${response.data.phoneNumbers.length}`, 'success');
+
+        // Show warnings if any
+        if (response.data.warnings && response.data.warnings.length > 0) {
+          addLog(`⚠ Warnings:`, 'warning');
+          response.data.warnings.forEach(w => addLog(`  ${w}`, 'warning'));
+        }
+
+        // Store phone numbers and set first one
+        if (response.data.phoneNumbers.length > 0) {
+          setPhoneNumbers(response.data.phoneNumbers);
+          setCurrentPhoneIndex(0);
+          setPhoneNumber(response.data.phoneNumbers[0]);
+          addLog(`✓ Phone numbers loaded! Use navigation to cycle through them.`, 'success');
+        }
+
+        // Close modal after 2 seconds
+        setTimeout(() => {
+          set_csv_window_opened(false);
+          setCSVFile(null);
+        }, 2000);
+      }
     } catch (err) {
-      console.error("Send Error:", err);
-      
-      // --- CAPTURE THE EXACT ERROR FROM BACKEND ---
-      const errorMsg = err.response && err.response.data && err.response.data.error 
-        ? err.response.data.error 
-        : 'Connection Failed';
-
-      setStatus({ type: 'error', msg: `Error: ${errorMsg}` });
+      console.error('Upload error:', err);
+      const errorMsg = err.response?.data?.error || 'Failed to upload CSV file';
+      addLog(`✗ Error: ${errorMsg}`, 'error');
+    } finally {
+      setIsUploading(false);
     }
   };
 
+  // Navigate to next phone number
+  const handleNextNumber = () => {
+    if (currentPhoneIndex < phoneNumbers.length - 1) {
+      const newIndex = currentPhoneIndex + 1;
+      setCurrentPhoneIndex(newIndex);
+      setPhoneNumber(phoneNumbers[newIndex]);
+    }
+  };
+
+  // Navigate to previous phone number
+  const handlePrevNumber = () => {
+    if (currentPhoneIndex > 0) {
+      const newIndex = currentPhoneIndex - 1;
+      setCurrentPhoneIndex(newIndex);
+      setPhoneNumber(phoneNumbers[newIndex]);
+    }
+  };
+
+  // Clear loaded phone numbers
+  const handleClearNumbers = () => {
+    setPhoneNumbers([]);
+    setCurrentPhoneIndex(0);
+    setPhoneNumber('');
+  };
+
+  const handleSend = async (e) => {
+    e.preventDefault();
+
+    // Determine which numbers to send to
+    const numbersToSend = phoneNumbers.length > 0 ? phoneNumbers : [phoneNumber];
+
+    if (numbersToSend.length === 0 || !numbersToSend[0]) {
+      setStatus({ type: 'error', msg: 'Please enter a phone number or upload a CSV' });
+      return;
+    }
+
+    if (!messageBody.trim()) {
+      setStatus({ type: 'error', msg: 'Please enter a message' });
+      return;
+    }
+
+    setStatus({ type: 'info', msg: 'Queueing SMS jobs...' });
+    setIsSendingBulk(true);
+
+    try {
+      const response = await axios.post(`${BACKEND_URL}/api/send-bulk-sms`, {
+        phoneNumbers: numbersToSend,
+        message: messageBody
+      }, { withCredentials: true });
+
+      if (response.data.success) {
+        setStatus({
+          type: 'success',
+          msg: `✓ ${response.data.totalJobs} SMS queued for sending!`
+        });
+
+        // Clear the form
+        setMessageBody('');
+        setPhoneNumbers([]);
+        setCurrentPhoneIndex(0);
+        setPhoneNumber('');
+
+        // Open SMS logs panel
+        setSmsLogsOpen(true);
+      }
+
+      // Clear success message after 5 seconds
+      setTimeout(() => setStatus({ type: '', msg: '' }), 5000);
+
+    } catch (err) {
+      console.error("Send Error:", err);
+      const errorMsg = err.response?.data?.error || 'Connection Failed';
+      setStatus({ type: 'error', msg: `Error: ${errorMsg}` });
+    } finally {
+      setIsSendingBulk(false);
+    }
+  };
+
+  const open_csv_window = () => {
+    set_csv_window_opened(true);
+    clearLogs();
+    addLog('Ready to upload CSV file', 'info');
+  }
+
   return (
-    <div className="min-h-screen bg-gray-900 text-white font-sans p-10 flex flex-col items-center">
+    <div className=" relative min-h-screen bg-gray-900 text-white font-sans flex flex-col items-center">
+
+      {csv_window_opened &&
+        <div style={{ background: "rgba(0, 0, 0, 0.7)" }} className='w-[100%] h-[100%] fixed inset-0 z-30 flex justify-center items-center'>
+
+          <div className="w-[50%] max-w-[600px] bg-gray-800 text-white border border-gray-600 shadow-2xl ">
+            {/* Header */}
+            <div className='flex justify-between items-center border-b border-gray-600 px-4 py-3 bg-gray-700'>
+              <div className='font-semibold text-lg'>📄 Upload CSV Contacts</div>
+              <button
+                onClick={() => { set_csv_window_opened(false); setCSVFile(null); }}
+                disabled={isUploading}
+                className='text-gray-400 hover:text-white text-xl font-bold disabled:opacity-50'
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Main Panel */}
+            <div className='p-4'>
+              <p className='text-gray-400 text-sm mb-4'>
+                Upload a CSV file with contact data. The AI will automatically detect columns for
+                First Name, Last Name, Company, and Phone Number.
+              </p>
+
+              <div className='border-2 border-dashed border-gray-600 p-6 mb-4 text-center hover:border-blue-500 transition'>
+                <input
+                  onChange={(e) => {
+                    setCSVFile(e.target.files[0]);
+                    if (e.target.files[0]) {
+                      addLog(`Selected file: ${e.target.files[0].name}`, 'info');
+                    }
+                  }}
+                  type="file"
+                  accept=".csv"
+                  className='hidden'
+                  id="csv-file-input"
+                  disabled={isUploading}
+                />
+                <label htmlFor="csv-file-input" className='cursor-pointer'>
+                  {csvFile ? (
+                    <div>
+                      <div className='text-green-400 text-lg mb-1'>✓ File Selected</div>
+                      <div className='text-white font-medium'>{csvFile.name}</div>
+                      <div className='text-gray-500 text-sm mt-1'>
+                        {(csvFile.size / 1024).toFixed(2)} KB
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className='text-4xl mb-2'>📄</div>
+                      <div className='text-gray-300'>Click to select CSV file</div>
+                      <div className='text-gray-500 text-sm mt-1'>or drag and drop</div>
+                    </div>
+                  )}
+                </label>
+              </div>
+
+              <div className='flex gap-3'>
+                <button
+                  onClick={() => { set_csv_window_opened(false); setCSVFile(null); }}
+                  disabled={isUploading}
+                  className='flex-1 bg-gray-700 hover:bg-gray-600 py-2 px-4 font-semibold transition disabled:opacity-50'
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCsvUpload}
+                  disabled={!csvFile || isUploading}
+                  className='flex-1 bg-blue-600 hover:bg-blue-500 py-2 px-4 font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed'
+                >
+                  {isUploading ? 'Processing...' : 'Upload & Process'}
+                </button>
+              </div>
+            </div>
+
+            {/* Logs Panel */}
+            <div className='border-t border-gray-600 px-4 py-3 bg-gray-900'>
+              <div className='flex justify-between items-center mb-2'>
+                <div className='text-sm font-semibold text-gray-400'>Logs</div>
+                <button
+                  onClick={clearLogs}
+                  className='text-xs text-gray-500 hover:text-gray-300'
+                >
+                  Clear
+                </button>
+              </div>
+              <div className='h-[120px] overflow-y-auto text-sm font-mono bg-gray-950 p-2 border border-gray-700'>
+                {csvLogs.length === 0 ? (
+                  <div className='text-gray-600'>No logs yet...</div>
+                ) : (
+                  csvLogs.map((log, idx) => (
+                    <div
+                      key={idx}
+                      className={`mb-1 ${log.type === 'error' ? 'text-red-400' :
+                        log.type === 'success' ? 'text-green-400' :
+                          log.type === 'warning' ? 'text-yellow-400' :
+                            'text-gray-300'
+                        }`}
+                    >
+                      <span className='text-gray-600'>[{log.timestamp}]</span> {log.message}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+
       <div className="w-full max-w-5xl flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold text-blue-400">Twilio SMS Panel</h1>
-        <button
-          onClick={handleLogout}
-          className="bg-red-600 hover:bg-red-500 px-4 py-2 rounded-lg font-semibold transition"
-        >
-          Logout
-        </button>
+        <div className='flex'>
+          {!smsLogsOpen && (
+            <button
+              onClick={() => setSmsLogsOpen(true)}
+              className=" bg-blue-600 hover:bg-blue-500 text-white px-3 py-4 rounded-l-lg shadow-lg z-40 transition-all hover:pr-5 flex flex-col items-center gap-1"
+              title="Open SMS Panel"
+            >
+              <span className="text-xs font-semibold" >SMS Panel</span>
+            </button>
+          )}
+          <button
+            onClick={handleLogout}
+            className="bg-red-600 ml-3 hover:bg-red-500 px-4 py-2 rounded-lg font-semibold transition"
+          >
+            Logout
+          </button>
+        </div>
+
       </div>
 
       <div className="flex w-full max-w-5xl gap-6 h-[80vh]">
-        
+
         {/* Left: Input Panel */}
         <div className="w-1/3 bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-          <h2 className="text-xl font-semibold mb-4">Compose Message</h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">Compose Message</h2>
+            <button onClick={open_csv_window} className="text-sm text-blue-400 hover:underline">📄 CSV</button>
+          </div>
+          {/* <button onClick={fetchHistory} className="mb-4 text-sm text-blue-400 hover:underline">Refresh Message History</button> */}
           <form onSubmit={handleSend} className="space-y-4">
             <div>
-              <label className="block text-sm text-gray-400 mb-1">To (Phone Number)</label>
-              <input 
-                type="text" 
-                placeholder="+1234567890" 
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-sm text-gray-400">To (Phone Number)</label>
+                {phoneNumbers.length > 0 && (
+                  <span className="text-xs text-blue-400 font-medium">
+                    {currentPhoneIndex + 1} / {phoneNumbers.length}
+                  </span>
+                )}
+              </div>
+              <input
+                type="text"
+                placeholder="+1234567890"
                 className="w-full bg-gray-700 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 required
               />
+
+              {/* Navigation controls for CSV numbers */}
+              {phoneNumbers.length > 0 && (
+                <div className="flex items-center justify-between mt-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrevNumber}
+                    disabled={currentPhoneIndex === 0}
+                    className="flex-1 bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    ← Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextNumber}
+                    disabled={currentPhoneIndex >= phoneNumbers.length - 1}
+                    className="flex-1 bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next →
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearNumbers}
+                    className="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-sm"
+                    title="Clear all loaded numbers"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
               <p className="text-xs text-gray-500 mt-1">Must include country code (e.g., +1 or +91)</p>
             </div>
             <div>
               <label className="block text-sm text-gray-400 mb-1">Message Body</label>
-              <textarea 
+              <textarea
                 rows="5"
-                placeholder="Type your message here..." 
+                placeholder="Type your message here..."
                 className="w-full bg-gray-700 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={messageBody}
                 onChange={(e) => setMessageBody(e.target.value)}
                 required
               />
             </div>
-            
-            <button 
-              type="submit" 
-              className={`w-full font-bold py-3 rounded-lg transition ${
-                status.type === 'info' ? 'bg-gray-600 cursor-wait' : 'bg-blue-600 hover:bg-blue-500'
-              }`}
-              disabled={status.type === 'info'}
+
+            <button
+              type="submit"
+              className={`w-full font-bold py-3 rounded-lg transition ${status.type === 'info' || isSendingBulk
+                ? 'bg-gray-600 cursor-wait'
+                : 'bg-blue-600 hover:bg-blue-500'
+                }`}
+              disabled={status.type === 'info' || isSendingBulk}
             >
-              {status.type === 'info' ? 'Sending...' : 'Send SMS'}
+              {status.type === 'info' || isSendingBulk
+                ? 'Processing...'
+                : phoneNumbers.length > 0
+                  ? `Send SMS to ${phoneNumbers.length} numbers`
+                  : 'Send SMS'
+              }
+            </button>
+
+            {/* SMS Side Panel Button */}
+            <button
+              type="button"
+              onClick={() => setSmsLogsOpen(true)}
+              className="w-full bg-gray-700 hover:bg-gray-600 font-semibold py-2 rounded-lg transition mt-2 flex items-center justify-center gap-2"
+            >
+              📋 SMS Side Panel
+              {smsQueue.length > 0 && (
+                <span className="bg-yellow-500 text-black text-xs px-2 py-0.5 rounded-full font-bold">
+                  {smsQueue.length}
+                </span>
+              )}
             </button>
 
             {/* ERROR / SUCCESS MESSAGE DISPLAY */}
             {status.msg && (
-              <div className={`text-center text-sm mt-2 p-2 rounded ${
-                status.type === 'error' ? 'bg-red-900 text-red-200 border border-red-700' :
+              <div className={`text-center text-sm mt-2 p-2 rounded ${status.type === 'error' ? 'bg-red-900 text-red-200 border border-red-700' :
                 status.type === 'success' ? 'bg-green-900 text-green-200 border border-green-700' :
-                'text-gray-400'
-              }`}>
+                  'text-gray-400'
+                }`}>
                 {status.msg}
               </div>
             )}
@@ -145,13 +517,12 @@ function App({ setIsAuthenticated }) {
           <h2 className="text-xl font-semibold mb-4 border-b border-gray-700 pb-2">Live Message Log</h2>
           <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
             {messages.map((msg, index) => (
-              <div 
-                key={index} 
-                className={`flex flex-col max-w-[70%] p-4 rounded-xl ${
-                  msg.direction === 'outbound' 
-                    ? 'ml-auto bg-blue-600 text-white rounded-tr-none' 
-                    : 'mr-auto bg-gray-700 text-gray-200 rounded-tl-none'
-                }`}
+              <div
+                key={index}
+                className={`flex flex-col max-w-[70%] p-4 rounded-xl ${msg.direction === 'outbound'
+                  ? 'ml-auto bg-blue-600 text-white rounded-tr-none'
+                  : 'mr-auto bg-gray-700 text-gray-200 rounded-tl-none'
+                  }`}
               >
                 <div className="text-xs opacity-70 mb-1">
                   {msg.direction === 'outbound' ? `Sent to ${msg.to}` : `From ${msg.from}`}
@@ -167,13 +538,107 @@ function App({ setIsAuthenticated }) {
         </div>
 
       </div>
+
+      {/* SMS Logs Side Panel */}
+      {
+        smsLogsOpen &&
+        <div
+          style={{ background: "white" }}
+          className={`absolute right-0 top-0 h-[90%] w-[400px] border border-black z-50 flex flex-col transform transition-transform duration-300 ease-in-out ${smsLogsOpen ? 'translate-x-0' : 'translate-x-full'
+            }`}
+        >
+          {/* Header */}
+          <div className="flex justify-between items-center border-b border-gray-700 bg-gray-700">
+            <h3 className="font-semibold text-lg">📋 SMS Queue</h3>
+            <button
+              onClick={() => setSmsLogsOpen(false)}
+              className="text-gray-400 hover:text-white text-xl font-bold"
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Queue Stats */}
+          <div className="p-4 bg-gray-900 border-b border-gray-700">
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-400">Pending:</span>
+              <span className="text-yellow-400 font-medium">
+                {smsQueue.filter(s => s.status === 'queued').length}
+              </span>
+            </div>
+            <div className="flex justify-between text-sm mt-1">
+              <span className="text-gray-400">Sending:</span>
+              <span className="text-blue-400 font-medium">
+                {smsQueue.filter(s => s.status === 'sending').length}
+              </span>
+            </div>
+            <div className="flex justify-between text-sm mt-1">
+              <span className="text-gray-400">Failed:</span>
+              <span className="text-red-400 font-medium">
+                {smsQueue.filter(s => s.status === 'failed').length}
+              </span>
+            </div>
+          </div>
+
+          {/* Queue List */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {smsQueue.length === 0 ? (
+              <div className="text-center text-gray-500 mt-10">
+                <div className="text-4xl mb-2">✓</div>
+                <div>All messages sent!</div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {smsQueue.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-3 rounded border ${item.status === 'sending'
+                      ? 'bg-blue-900 border-blue-700'
+                      : item.status === 'failed'
+                        ? 'bg-red-900 border-red-700'
+                        : 'bg-gray-700 border-gray-600'
+                      }`}
+                  >
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono text-sm">{item.phoneNumber}</span>
+                      <span className={`text-xs px-2 py-1 rounded ${item.status === 'sending'
+                        ? 'bg-blue-600 text-blue-100'
+                        : item.status === 'failed'
+                          ? 'bg-red-600 text-red-100'
+                          : 'bg-gray-600 text-gray-300'
+                        }`}>
+                        {item.status === 'sending' ? '⏳ Sending...' :
+                          item.status === 'failed' ? '❌ Failed' :
+                            '⏱️ Queued'}
+                      </span>
+                    </div>
+                    {item.error && (
+                      <div className="text-xs text-red-300 mt-1">{item.error}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          {/* Footer */}
+          <div className="p-4 border-t border-gray-700 bg-gray-900">
+            <button
+              onClick={() => {
+                setSmsQueue([]);
+                setSmsLogsOpen(false);
+              }}
+              className="w-full bg-gray-700 hover:bg-gray-600 py-2 rounded font-semibold text-sm"
+            >
+              Clear & Close
+            </button>
+          </div>
+        </div>
+      }
+
     </div>
   );
 }
 
 export default App;
-
-
-
-
-
