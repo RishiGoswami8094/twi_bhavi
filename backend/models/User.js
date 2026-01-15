@@ -13,6 +13,12 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true,
     minlength: 6
+  },
+  settings: {
+    numberPrefix: {
+      type: String,
+      default: '+1' // Default country code prefix
+    }
   }
 }, { timestamps: true });
 

@@ -193,6 +193,100 @@ app.get('/api/auth/check', (req, res) => {
   }
 });
 
+// --- API: Get User Settings ---
+app.get('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId).select('settings');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ 
+      success: true, 
+      settings: user.settings || { numberPrefix: '+1' } 
+    });
+  } catch (error) {
+    console.error('Get Settings Error:', error);
+    res.status(500).json({ error: 'Failed to get settings' });
+  }
+});
+
+// --- API: Update User Settings ---
+app.put('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const { numberPrefix } = req.body;
+    
+    const user = await User.findById(req.session.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Update settings
+    if (!user.settings) {
+      user.settings = {};
+    }
+    
+    if (numberPrefix !== undefined) {
+      user.settings.numberPrefix = numberPrefix;
+    }
+    
+    await user.save();
+    
+    res.json({ 
+      success: true, 
+      message: 'Settings updated successfully',
+      settings: user.settings 
+    });
+  } catch (error) {
+    console.error('Update Settings Error:', error);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// --- Helper: Normalize phone number to standard format ---
+// Removes all special characters except digits, ensures + prefix
+// Output format: +XXXXXXXXXXX (no spaces, dashes, brackets)
+function normalizePhoneNumber(phoneNumber, defaultPrefix = '+1') {
+  if (!phoneNumber) return null;
+  
+  let cleaned = phoneNumber.trim();
+  
+  // Check if it starts with + (has country code)
+  const hasPlus = cleaned.startsWith('+');
+  
+  // Remove all non-digit characters
+  cleaned = cleaned.replace(/\D/g, '');
+  
+  if (!cleaned) return null;
+  
+  // If original had +, add it back
+  if (hasPlus) {
+    return '+' + cleaned;
+  }
+  
+  // If no + but has enough digits to include country code (11+ digits starting with 1 for US)
+  // or starts with common country codes, try to detect
+  // For now, if no +, we add the default prefix
+  return defaultPrefix + cleaned;
+}
+
+// --- Helper: Normalize phone number for comparison (always with +) ---
+function normalizeForComparison(phoneNumber) {
+  if (!phoneNumber) return null;
+  
+  let cleaned = phoneNumber.trim();
+  
+  // Check if it starts with + (has country code)
+  const hasPlus = cleaned.startsWith('+');
+  
+  // Remove all non-digit characters
+  cleaned = cleaned.replace(/\D/g, '');
+  
+  if (!cleaned) return null;
+  
+  // Always return with + prefix for comparison
+  return '+' + cleaned;
+}
+
 // --- Helper: Parse CSV string to array ---
 function parseCSV(csvString) {
   const lines = csvString.split(/\r?\n/).filter(line => line.trim());
@@ -288,6 +382,30 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
     const contacts = [];
     const phoneNumbers = [];
     const errors = [];
+    const duplicatesInCsv = []; // Track duplicates within the CSV
+    const duplicatesInDb = []; // Track duplicates already in database
+    const seenPhoneNumbers = new Set(); // Track phone numbers we've seen in this CSV
+
+    // First, get all phone numbers from CSV and normalize them to check against DB
+    const allNormalizedPhoneNumbers = [];
+    for (let i = 0; i < dataRows.length; i++) {
+      const row = dataRows[i];
+      const phoneIdx = columnMapping.phoneNumber - 1;
+      let phoneNumber = row[phoneIdx]?.trim() || '';
+      if (phoneNumber) {
+        // Normalize to standard format: +XXXXXXXXXXX
+        const normalized = normalizePhoneNumber(phoneNumber, '+1');
+        if (normalized) {
+          allNormalizedPhoneNumbers.push(normalized);
+        }
+      }
+    }
+
+    // Check which phone numbers already exist in database
+    const existingContacts = await Contact.find({
+      phoneNumber: { $in: allNormalizedPhoneNumbers }
+    }).select('phoneNumber');
+    const existingPhoneNumbers = new Set(existingContacts.map(c => c.phoneNumber));
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
@@ -295,15 +413,38 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
       try {
         // Extract phone number (required)
         const phoneIdx = columnMapping.phoneNumber - 1; // Convert to 0-based
-        let phoneNumber = row[phoneIdx]?.trim() || '';
+        let rawPhoneNumber = row[phoneIdx]?.trim() || '';
         
-        if (!phoneNumber) {
+        if (!rawPhoneNumber) {
           errors.push(`Row ${i + 2}: Missing phone number`);
           continue;
         }
 
-        // Clean and normalize phone number
-        phoneNumber = phoneNumber.replace(/[^\d+\-\(\)\s]/g, '').trim();
+        // Normalize phone number to standard format: +XXXXXXXXXXX
+        const phoneNumber = normalizePhoneNumber(rawPhoneNumber, '+1');
+        
+        if (!phoneNumber) {
+          errors.push(`Row ${i + 2}: Invalid phone number format`);
+          continue;
+        }
+
+        // Check for duplicate within this CSV file
+        if (seenPhoneNumbers.has(phoneNumber)) {
+          duplicatesInCsv.push(phoneNumber);
+          continue; // Skip this duplicate
+        }
+
+        // Check for duplicate in database
+        if (existingPhoneNumbers.has(phoneNumber)) {
+          duplicatesInDb.push(phoneNumber);
+          // Still add to phoneNumbers for sending SMS, but don't save to DB
+          phoneNumbers.push(phoneNumber);
+          seenPhoneNumbers.add(phoneNumber);
+          continue;
+        }
+
+        // Mark as seen
+        seenPhoneNumbers.add(phoneNumber);
         
         // Extract other fields
         const firstName = columnMapping.firstName ? (row[columnMapping.firstName - 1]?.trim() || '') : '';
@@ -365,7 +506,12 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
       columnMapping,
       totalRows: dataRows.length,
       processedRows: contacts.length,
-      uploadBatchId
+      uploadBatchId,
+      duplicates: {
+        inCsv: duplicatesInCsv,
+        inDb: duplicatesInDb,
+        totalSkipped: duplicatesInCsv.length + duplicatesInDb.length
+      }
     };
 
     if (errors.length > 0) {
@@ -443,14 +589,41 @@ app.post('/api/incoming-sms', async (req, res) => {
   console.log(`📩 Incoming SMS from ${From}: ${Body}`);
 
   try {
+    // Look up contact by phone number (try different formats)
+    let contact = null;
+    try {
+      // Normalize phone number to standard format for lookup: +XXXXXXXXXXX
+      const normalizedFrom = normalizeForComparison(From);
+      console.log(`🔍 Looking up contact with normalized number: ${normalizedFrom}`);
+      
+      // Search for contact with matching normalized phone number
+      // Since we now store all numbers in normalized format (+XXXXXXXXXXX),
+      // we can do a simple exact match
+      if (normalizedFrom) {
+        contact = await Contact.findOne({ phoneNumber: normalizedFrom });
+      }
+      
+      if (contact) {
+        console.log(`✅ Found contact: ${contact.firstName} ${contact.lastName} (${contact.companyName})`);
+      } else {
+        console.log(`ℹ️ No contact found for ${normalizedFrom}`);
+      }
+    } catch (contactError) {
+      console.warn('Contact lookup failed:', contactError.message);
+    }
+
     const receivedMessage = new Message({
       to: process.env.TWILIO_PHONE_NUMBER,
       from: From,
       body: Body,
       direction: 'inbound',
-      status: 'received'
+      status: 'received',
+      contact: contact ? contact._id : null
     });
     await receivedMessage.save();
+
+    // Populate contact before emitting to frontend
+    await receivedMessage.populate('contact', 'firstName lastName companyName phoneNumber');
 
     io.emit('sms_update', receivedMessage);
 
@@ -482,7 +655,9 @@ app.post('/api/incoming-sms', async (req, res) => {
 // --- API: Get History ---
 app.get('/api/messages', async (req, res) => {
   try {
-    const messages = await Message.find().sort({ createdAt: 1 });
+    const messages = await Message.find()
+      .populate('contact', 'firstName lastName companyName phoneNumber')
+      .sort({ createdAt: 1 });
     res.json(messages);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch messages" });

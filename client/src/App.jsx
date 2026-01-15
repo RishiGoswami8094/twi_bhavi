@@ -27,6 +27,116 @@ function App({ setIsAuthenticated }) {
   const [smsQueue, setSmsQueue] = useState([]); // Current queue of pending SMS
   const [isSendingBulk, setIsSendingBulk] = useState(false);
 
+  // Toast notification state
+  const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
+
+  // Settings state
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [numberPrefix, setNumberPrefix] = useState('+1'); // Default to +1
+
+  // Country code options for dropdown
+  const countryCodes = [
+    { code: 'none', label: 'None (No prefix)' },
+    { code: '+1', label: '+1 (USA/Canada)' },
+    { code: '+44', label: '+44 (UK)' },
+    { code: '+91', label: '+91 (India)' },
+    { code: '+61', label: '+61 (Australia)' },
+    { code: '+49', label: '+49 (Germany)' },
+    { code: '+33', label: '+33 (France)' },
+    { code: '+81', label: '+81 (Japan)' },
+    { code: '+86', label: '+86 (China)' },
+    { code: '+55', label: '+55 (Brazil)' },
+    { code: '+52', label: '+52 (Mexico)' },
+    { code: '+34', label: '+34 (Spain)' },
+    { code: '+39', label: '+39 (Italy)' },
+    { code: '+7', label: '+7 (Russia)' },
+    { code: '+82', label: '+82 (South Korea)' },
+    { code: '+31', label: '+31 (Netherlands)' },
+    { code: '+46', label: '+46 (Sweden)' },
+    { code: '+41', label: '+41 (Switzerland)' },
+    { code: '+65', label: '+65 (Singapore)' },
+    { code: '+971', label: '+971 (UAE)' },
+    { code: '+966', label: '+966 (Saudi Arabia)' },
+    { code: '+27', label: '+27 (South Africa)' },
+    { code: '+234', label: '+234 (Nigeria)' },
+    { code: '+63', label: '+63 (Philippines)' },
+    { code: '+62', label: '+62 (Indonesia)' },
+    { code: '+60', label: '+60 (Malaysia)' },
+    { code: '+64', label: '+64 (New Zealand)' },
+    { code: '+48', label: '+48 (Poland)' },
+    { code: '+90', label: '+90 (Turkey)' },
+    { code: '+20', label: '+20 (Egypt)' },
+  ];
+
+  // Show toast notification (auto-dismiss after 5 seconds)
+  const showToast = (message, type = 'info') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => {
+      setToast({ show: false, message: '', type: 'info' });
+    }, 5000);
+  };
+
+  // Fetch user settings
+  const fetchSettings = async () => {
+    try {
+      const res = await axios.get(`${BACKEND_URL}/api/settings`, { withCredentials: true });
+      if (res.data.success && res.data.settings) {
+        setNumberPrefix(res.data.settings.numberPrefix || '+1');
+      }
+    } catch (err) {
+      console.error('Could not fetch settings', err);
+    }
+  };
+
+  // Save user settings
+  const saveSettings = async (newPrefix) => {
+    try {
+      const res = await axios.put(`${BACKEND_URL}/api/settings`, {
+        numberPrefix: newPrefix
+      }, { withCredentials: true });
+
+      if (res.data.success) {
+        setNumberPrefix(newPrefix);
+        showToast('Settings saved successfully!', 'success');
+      }
+    } catch (err) {
+      console.error('Could not save settings', err);
+      showToast('Failed to save settings', 'error');
+    }
+  };
+
+  // Helper function to check if a phone number has a country code
+  const hasCountryCode = (phoneNumber) => {
+    if (!phoneNumber) return false;
+    const cleaned = phoneNumber.trim();
+    // Number has country code if it starts with + followed by digits
+    return /^\+\d/.test(cleaned);
+  };
+
+  // Apply prefix to phone number if needed
+  const applyPrefixToNumber = (phoneNumber) => {
+    if (!phoneNumber) return phoneNumber;
+    const cleaned = phoneNumber.trim();
+
+    // If number already has a country code, return as is
+    if (hasCountryCode(cleaned)) {
+      return cleaned;
+    }
+
+    // If prefix is 'none', return the number as is
+    if (numberPrefix === 'none') {
+      return cleaned;
+    }
+
+    // Add the prefix
+    return `${numberPrefix}${cleaned}`;
+  };
+
+  // Apply prefix to all phone numbers
+  const applyPrefixToNumbers = (numbers) => {
+    return numbers.map(num => applyPrefixToNumber(num));
+  };
+
   // Add log entry
   const addLog = (message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
@@ -40,6 +150,7 @@ function App({ setIsAuthenticated }) {
 
   useEffect(() => {
     fetchHistory();
+    fetchSettings(); // Fetch user settings on load
 
     // Listen for SMS updates
     socket.on('sms_update', (newMessage) => {
@@ -151,6 +262,24 @@ function App({ setIsAuthenticated }) {
         addLog(`Total rows processed: ${response.data.processedRows}`, 'success');
         addLog(`Phone numbers extracted: ${response.data.phoneNumbers.length}`, 'success');
 
+        // Show duplicate notifications
+        if (response.data.duplicates && response.data.duplicates.totalSkipped > 0) {
+          const { inCsv, inDb } = response.data.duplicates;
+
+          if (inCsv.length > 0) {
+            addLog(`⚠ ${inCsv.length} duplicate(s) found within CSV - skipped`, 'warning');
+          }
+
+          if (inDb.length > 0) {
+            addLog(`⚠ ${inDb.length} number(s) already exist in database - skipped saving`, 'warning');
+            // Show toast for DB duplicates
+            showToast(
+              `${inDb.length} phone number(s) already exist in contacts and were not saved again`,
+              'warning'
+            );
+          }
+        }
+
         // Show warnings if any
         if (response.data.warnings && response.data.warnings.length > 0) {
           addLog(`⚠ Warnings:`, 'warning');
@@ -209,9 +338,9 @@ function App({ setIsAuthenticated }) {
     e.preventDefault();
 
     // Determine which numbers to send to
-    const numbersToSend = phoneNumbers.length > 0 ? phoneNumbers : [phoneNumber];
+    const rawNumbers = phoneNumbers.length > 0 ? phoneNumbers : [phoneNumber];
 
-    if (numbersToSend.length === 0 || !numbersToSend[0]) {
+    if (rawNumbers.length === 0 || !rawNumbers[0]) {
       setStatus({ type: 'error', msg: 'Please enter a phone number or upload a CSV' });
       return;
     }
@@ -220,6 +349,9 @@ function App({ setIsAuthenticated }) {
       setStatus({ type: 'error', msg: 'Please enter a message' });
       return;
     }
+
+    // Apply country code prefix to numbers without one
+    const numbersToSend = applyPrefixToNumbers(rawNumbers);
 
     setStatus({ type: 'info', msg: 'Queueing SMS jobs...' });
     setIsSendingBulk(true);
@@ -266,6 +398,86 @@ function App({ setIsAuthenticated }) {
 
   return (
     <div className=" relative min-h-screen bg-gray-900 text-white font-sans flex flex-col items-center">
+
+      {/* Settings Modal */}
+      {settingsOpen && (
+        <div
+          style={{ background: "rgba(0, 0, 0, 0.7)" }}
+          className='w-full h-full fixed inset-0 z-50 flex justify-center items-center'
+          onClick={(e) => { if (e.target === e.currentTarget) setSettingsOpen(false); }}
+        >
+          <div
+            style={{ background: "rgba(255, 255, 255)" }}
+            className="w-[400px] bg-gray-800 text-white border border-gray-600 shadow-2xl rounded-xl overflow-hidden">
+            {/* Header */}
+            <div className='flex justify-between items-center border-b border-gray-600 px-4 py-3 bg-gray-700'>
+              <div className='font-semibold text-lg'>⚙️ Settings</div>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className='text-gray-400 hover:text-white text-xl font-bold'
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Settings Content */}
+            <div className='p-6'>
+              <div className='mb-4'>
+                <label className='block text-sm text-gray-400 mb-2'>
+                  Number Prefix (Country Code)
+                </label>
+                <select
+                  value={numberPrefix}
+                  onChange={(e) => {
+                    const newPrefix = e.target.value;
+                    setNumberPrefix(newPrefix);
+                    saveSettings(newPrefix);
+                  }}
+                  className='w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                >
+                  {countryCodes.map((cc) => (
+                    <option key={cc.code} value={cc.code}>
+                      {cc.label}
+                    </option>
+                  ))}
+                </select>
+                <p className='text-xs text-gray-500 mt-2'>
+                  If a phone number doesn't have a country code (doesn't start with +),
+                  this prefix will be added automatically when sending SMS.
+                </p>
+              </div>
+
+              {/* Current Setting Display */}
+              <div className='bg-gray-900 p-4 rounded-lg border border-gray-700'>
+                <div className='text-sm text-gray-400 mb-1'>Current Setting:</div>
+                <div className='text-lg font-semibold'>
+                  {numberPrefix === 'none'
+                    ? '❌ No prefix will be added'
+                    : `${numberPrefix} will be added to numbers without country code`
+                  }
+                </div>
+              </div>
+
+              {/* Example */}
+              <div className='mt-4 text-sm text-gray-500'>
+                <div className='font-medium text-gray-400 mb-1'>Example:</div>
+                <div>• <code className='bg-gray-700 px-1 rounded'>9876543210</code> → <code className='bg-gray-700 px-1 rounded'>{numberPrefix === 'none' ? '9876543210' : `${numberPrefix}9876543210`}</code></div>
+                <div>• <code className='bg-gray-700 px-1 rounded'>+919876543210</code> → <code className='bg-gray-700 px-1 rounded'>+919876543210</code> (unchanged)</div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className='border-t border-gray-600 px-4 py-3 bg-gray-900'>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className='w-full bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-semibold transition'
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {csv_window_opened &&
         <div style={{ background: "rgba(255,255,255,0.8)" }} className='w-[100%] h-[100%] fixed inset-0 z-30 flex justify-center items-center'>
@@ -377,24 +589,30 @@ function App({ setIsAuthenticated }) {
 
       <div className="w-full max-w-5xl flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold text-blue-400">Twilio SMS Panel</h1>
-        <div className='flex'>
+        <div className='flex items-center gap-2'>
           {!smsLogsOpen && (
             <button
               onClick={() => setSmsLogsOpen(true)}
-              className=" bg-blue-600 hover:bg-blue-500 text-white px-3 py-4 rounded-l-lg shadow-lg z-40 transition-all hover:pr-5 flex flex-col items-center gap-1"
+              className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg shadow-lg transition-all flex items-center gap-1"
               title="Open SMS Panel"
             >
-              <span className="text-xs font-semibold" >SMS Panel</span>
+              <span className="text-sm font-semibold">📋 SMS Panel</span>
             </button>
           )}
           <button
+            onClick={() => setSettingsOpen(true)}
+            className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg shadow-lg transition-all flex items-center gap-1"
+            title="Settings"
+          >
+            <span className="text-sm font-semibold">⚙️ Settings</span>
+          </button>
+          <button
             onClick={handleLogout}
-            className="bg-red-600 ml-3 hover:bg-red-500 px-4 py-2 rounded-lg font-semibold transition"
+            className="bg-red-600 hover:bg-red-500 px-4 py-2 rounded-lg font-semibold transition"
           >
             Logout
           </button>
         </div>
-
       </div>
 
       <div className="flex w-full max-w-5xl gap-6 h-[80vh]">
@@ -525,8 +743,16 @@ function App({ setIsAuthenticated }) {
                   }`}
               >
                 <div className="text-xs opacity-70 mb-1">
-                  {msg.direction === 'outbound' ? `Sent to ${msg.to}` : `From ${msg.from}`}
+                  {msg.direction === 'outbound'
+                    ? `Sent to ${msg.to}`
+                    : msg.contact
+                      ? `${msg.contact.firstName || ''} ${msg.contact.lastName || ''}${msg.contact.companyName ? ` • ${msg.contact.companyName}` : ''}`
+                      : `From ${msg.from}`
+                  }
                 </div>
+                {msg.direction === 'inbound' && msg.contact && (
+                  <div className="text-xs text-gray-400 mb-1">{msg.from}</div>
+                )}
                 <div className="text-md break-words">{msg.body}</div>
                 <div className="text-xs text-right opacity-50 mt-2">
                   {new Date(msg.createdAt).toLocaleTimeString()}
@@ -622,7 +848,6 @@ function App({ setIsAuthenticated }) {
           </div>
 
           {/* Footer */}
-          {/* Footer */}
           <div className="p-4 border-t border-gray-700 bg-gray-900">
             <button
               onClick={() => {
@@ -636,6 +861,33 @@ function App({ setIsAuthenticated }) {
           </div>
         </div>
       }
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div
+          className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 px-6 py-4 rounded-lg shadow-lg flex items-center gap-3 animate-fade-in ${toast.type === 'warning'
+              ? 'bg-yellow-600 text-white'
+              : toast.type === 'error'
+                ? 'bg-red-600 text-white'
+                : toast.type === 'success'
+                  ? 'bg-green-600 text-white'
+                  : 'bg-blue-600 text-white'
+            }`}
+        >
+          <span className="text-xl">
+            {toast.type === 'warning' ? '⚠️' :
+              toast.type === 'error' ? '❌' :
+                toast.type === 'success' ? '✅' : 'ℹ️'}
+          </span>
+          <span className="font-medium">{toast.message}</span>
+          <button
+            onClick={() => setToast({ show: false, message: '', type: 'info' })}
+            className="ml-2 text-white/80 hover:text-white font-bold"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
     </div>
   );

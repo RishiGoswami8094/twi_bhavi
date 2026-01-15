@@ -6,6 +6,12 @@ const MessageSchema = new mongoose.Schema({
   body: String,
   direction: String,  // 'outbound' (sent by you) or 'inbound' (received)
   status: String,
+  // Reference to Contact model (for inbound messages where sender is a known contact)
+  contact: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Contact',
+    default: null
+  },
   createdAt: { type: Date, default: Date.now }
 });
 
