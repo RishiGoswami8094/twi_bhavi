@@ -268,9 +268,9 @@ function App({ setIsAuthenticated }) {
     <div className=" relative min-h-screen bg-gray-900 text-white font-sans flex flex-col items-center">
 
       {csv_window_opened &&
-        <div style={{ background: "rgba(0, 0, 0, 0.7)" }} className='w-[100%] h-[100%] fixed inset-0 z-30 flex justify-center items-center'>
+        <div style={{ background: "rgba(255,255,255,0.8)" }} className='w-[100%] h-[100%] fixed inset-0 z-30 flex justify-center items-center'>
 
-          <div className="w-[50%] max-w-[600px] bg-gray-800 text-white border border-gray-600 shadow-2xl ">
+          <div style={{ background: "rgba(255,255,255)" }} className="w-[50%] max-w-[600px] bg-gray-800 text-white border border-gray-600 shadow-2xl ">
             {/* Header */}
             <div className='flex justify-between items-center border-b border-gray-600 px-4 py-3 bg-gray-700'>
               <div className='font-semibold text-lg'>📄 Upload CSV Contacts</div>
