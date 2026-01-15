@@ -245,6 +245,7 @@ app.put('/api/settings', requireAuth, async (req, res) => {
 // --- Helper: Normalize phone number to standard format ---
 // Removes all special characters except digits, ensures + prefix
 // Output format: +XXXXXXXXXXX (no spaces, dashes, brackets)
+// If defaultPrefix is empty/none, number without + will remain without country code
 function normalizePhoneNumber(phoneNumber, defaultPrefix = '+1') {
   if (!phoneNumber) return null;
   
@@ -258,14 +259,17 @@ function normalizePhoneNumber(phoneNumber, defaultPrefix = '+1') {
   
   if (!cleaned) return null;
   
-  // If original had +, add it back
+  // If original had +, add it back (number already has country code)
   if (hasPlus) {
     return '+' + cleaned;
   }
   
-  // If no + but has enough digits to include country code (11+ digits starting with 1 for US)
-  // or starts with common country codes, try to detect
-  // For now, if no +, we add the default prefix
+  // If no + and no default prefix (user selected 'none'), return just the digits
+  if (!defaultPrefix || defaultPrefix === 'none') {
+    return cleaned;
+  }
+  
+  // Add the default prefix
   return defaultPrefix + cleaned;
 }
 
@@ -324,6 +328,11 @@ function parseCSV(csvString) {
 // --- API: Upload and Process CSV ---
 app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, res) => {
   try {
+    // Get user's settings for default country code prefix
+    const user = await User.findById(req.session.userId).select('settings');
+    const defaultPrefix = user?.settings?.numberPrefix || '+1';
+    console.log(`📱 Using country code prefix from settings: ${defaultPrefix}`);
+
     // Check if file was uploaded
     if (!req.file) {
       return res.status(400).json({ 
@@ -393,8 +402,8 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
       const phoneIdx = columnMapping.phoneNumber - 1;
       let phoneNumber = row[phoneIdx]?.trim() || '';
       if (phoneNumber) {
-        // Normalize to standard format: +XXXXXXXXXXX
-        const normalized = normalizePhoneNumber(phoneNumber, '+1');
+        // Normalize to standard format: +XXXXXXXXXXX (using user's prefix setting)
+        const normalized = normalizePhoneNumber(phoneNumber, defaultPrefix);
         if (normalized) {
           allNormalizedPhoneNumbers.push(normalized);
         }
@@ -420,8 +429,8 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
           continue;
         }
 
-        // Normalize phone number to standard format: +XXXXXXXXXXX
-        const phoneNumber = normalizePhoneNumber(rawPhoneNumber, '+1');
+        // Normalize phone number to standard format: +XXXXXXXXXXX (using user's prefix setting)
+        const phoneNumber = normalizePhoneNumber(rawPhoneNumber, defaultPrefix);
         
         if (!phoneNumber) {
           errors.push(`Row ${i + 2}: Invalid phone number format`);
