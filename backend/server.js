@@ -45,7 +45,7 @@ console.log("process.env.TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID, p
 
 
 app.use(cors({
-  origin: ['https://twibhavi-production.up.railway.app', 'https://twili.netlify.app', 'http://localhost:5173'],
+  origin: ['https://twibhavi-production.up.railway.app', 'https://twili.netlify.app', 'http://localhost:5173', '"https://twi-bhavi.vercel.app"'],
   credentials: true
 }));
 app.use(express.json());
