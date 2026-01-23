@@ -200,9 +200,9 @@ app.get('/api/settings', requireAuth, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    res.json({ 
-      success: true, 
-      settings: user.settings || { numberPrefix: '+1' } 
+    res.json({
+      success: true,
+      settings: user.settings || { numberPrefix: '+1' }
     });
   } catch (error) {
     console.error('Get Settings Error:', error);
@@ -214,27 +214,27 @@ app.get('/api/settings', requireAuth, async (req, res) => {
 app.put('/api/settings', requireAuth, async (req, res) => {
   try {
     const { numberPrefix } = req.body;
-    
+
     const user = await User.findById(req.session.userId);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     // Update settings
     if (!user.settings) {
       user.settings = {};
     }
-    
+
     if (numberPrefix !== undefined) {
       user.settings.numberPrefix = numberPrefix;
     }
-    
+
     await user.save();
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'Settings updated successfully',
-      settings: user.settings 
+      settings: user.settings
     });
   } catch (error) {
     console.error('Update Settings Error:', error);
@@ -248,27 +248,27 @@ app.put('/api/settings', requireAuth, async (req, res) => {
 // If defaultPrefix is empty/none, number without + will remain without country code
 function normalizePhoneNumber(phoneNumber, defaultPrefix = '+1') {
   if (!phoneNumber) return null;
-  
+
   let cleaned = phoneNumber.trim();
-  
+
   // Check if it starts with + (has country code)
   const hasPlus = cleaned.startsWith('+');
-  
+
   // Remove all non-digit characters
   cleaned = cleaned.replace(/\D/g, '');
-  
+
   if (!cleaned) return null;
-  
+
   // If original had +, add it back (number already has country code)
   if (hasPlus) {
     return '+' + cleaned;
   }
-  
+
   // If no + and no default prefix (user selected 'none'), return just the digits
   if (!defaultPrefix || defaultPrefix === 'none') {
     return cleaned;
   }
-  
+
   // Add the default prefix
   return defaultPrefix + cleaned;
 }
@@ -276,17 +276,17 @@ function normalizePhoneNumber(phoneNumber, defaultPrefix = '+1') {
 // --- Helper: Normalize phone number for comparison (always with +) ---
 function normalizeForComparison(phoneNumber) {
   if (!phoneNumber) return null;
-  
+
   let cleaned = phoneNumber.trim();
-  
+
   // Check if it starts with + (has country code)
   const hasPlus = cleaned.startsWith('+');
-  
+
   // Remove all non-digit characters
   cleaned = cleaned.replace(/\D/g, '');
-  
+
   if (!cleaned) return null;
-  
+
   // Always return with + prefix for comparison
   return '+' + cleaned;
 }
@@ -295,15 +295,15 @@ function normalizeForComparison(phoneNumber) {
 function parseCSV(csvString) {
   const lines = csvString.split(/\r?\n/).filter(line => line.trim());
   const rows = [];
-  
+
   for (const line of lines) {
     const row = [];
     let current = '';
     let inQuotes = false;
-    
+
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
-      
+
       if (char === '"') {
         if (inQuotes && line[i + 1] === '"') {
           current += '"';
@@ -321,7 +321,7 @@ function parseCSV(csvString) {
     row.push(current.trim());
     rows.push(row);
   }
-  
+
   return rows;
 }
 
@@ -335,9 +335,9 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
 
     // Check if file was uploaded
     if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'No CSV file uploaded' 
+      return res.status(400).json({
+        success: false,
+        error: 'No CSV file uploaded'
       });
     }
 
@@ -346,16 +346,16 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
     const allRows = parseCSV(csvContent);
 
     if (allRows.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'CSV file is empty' 
+      return res.status(400).json({
+        success: false,
+        error: 'CSV file is empty'
       });
     }
 
     if (allRows.length < 2) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'CSV file must have at least a header row and one data row' 
+      return res.status(400).json({
+        success: false,
+        error: 'CSV file must have at least a header row and one data row'
       });
     }
 
@@ -377,15 +377,15 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
 
     // Validate that phone number column was detected
     if (columnMapping.phoneNumber === null) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Could not detect phone number column in CSV. Please ensure your CSV contains phone numbers.' 
+      return res.status(400).json({
+        success: false,
+        error: 'Could not detect phone number column in CSV. Please ensure your CSV contains phone numbers.'
       });
     }
 
     // Generate batch ID for this upload
     const uploadBatchId = `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     // Process data rows (skip header)
     const dataRows = allRows.slice(1);
     const contacts = [];
@@ -418,12 +418,12 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
-      
+
       try {
         // Extract phone number (required)
         const phoneIdx = columnMapping.phoneNumber - 1; // Convert to 0-based
         let rawPhoneNumber = row[phoneIdx]?.trim() || '';
-        
+
         if (!rawPhoneNumber) {
           errors.push(`Row ${i + 2}: Missing phone number`);
           continue;
@@ -431,7 +431,7 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
 
         // Normalize phone number to standard format: +XXXXXXXXXXX (using user's prefix setting)
         const phoneNumber = normalizePhoneNumber(rawPhoneNumber, defaultPrefix);
-        
+
         if (!phoneNumber) {
           errors.push(`Row ${i + 2}: Invalid phone number format`);
           continue;
@@ -454,12 +454,12 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
 
         // Mark as seen
         seenPhoneNumbers.add(phoneNumber);
-        
+
         // Extract other fields
         const firstName = columnMapping.firstName ? (row[columnMapping.firstName - 1]?.trim() || '') : '';
         const lastName = columnMapping.lastName ? (row[columnMapping.lastName - 1]?.trim() || '') : '';
         const companyName = columnMapping.companyName ? (row[columnMapping.companyName - 1]?.trim() || '') : '';
-        
+
         // Extract "other" fields
         const otherData = {};
         const headerRow = allRows[0];
@@ -487,7 +487,7 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
 
         contacts.push(contact);
         phoneNumbers.push(phoneNumber);
-        
+
       } catch (rowError) {
         errors.push(`Row ${i + 2}: ${rowError.message}`);
       }
@@ -500,9 +500,9 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
         console.log(`✅ Saved ${contacts.length} contacts to database`);
       } catch (dbError) {
         console.error('Database save error:', dbError);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Failed to save contacts to database' 
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to save contacts to database'
         });
       }
     }
@@ -534,9 +534,9 @@ app.post('/api/upload-csv', requireAuth, upload.single('csvFile'), async (req, r
 
   } catch (error) {
     console.error('CSV Upload Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to process CSV file' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to process CSV file'
     });
   }
 });
@@ -604,14 +604,14 @@ app.post('/api/incoming-sms', async (req, res) => {
       // Normalize phone number to standard format for lookup: +XXXXXXXXXXX
       const normalizedFrom = normalizeForComparison(From);
       console.log(`🔍 Looking up contact with normalized number: ${normalizedFrom}`);
-      
+
       // Search for contact with matching normalized phone number
       // Since we now store all numbers in normalized format (+XXXXXXXXXXX),
       // we can do a simple exact match
       if (normalizedFrom) {
         contact = await Contact.findOne({ phoneNumber: normalizedFrom });
       }
-      
+
       if (contact) {
         console.log(`✅ Found contact: ${contact.firstName} ${contact.lastName} (${contact.companyName})`);
       } else {
@@ -679,16 +679,16 @@ app.post('/api/send-bulk-sms', requireAuth, async (req, res) => {
 
   // Validation
   if (!phoneNumbers || !Array.isArray(phoneNumbers) || phoneNumbers.length === 0) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Phone numbers array is required' 
+    return res.status(400).json({
+      success: false,
+      error: 'Phone numbers array is required'
     });
   }
 
   if (!message || message.trim() === '') {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Message body is required' 
+    return res.status(400).json({
+      success: false,
+      error: 'Message body is required'
     });
   }
 
@@ -696,9 +696,9 @@ app.post('/api/send-bulk-sms', requireAuth, async (req, res) => {
   const validNumbers = phoneNumbers.filter(num => num && num.trim() !== '');
 
   if (validNumbers.length === 0) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'No valid phone numbers provided' 
+    return res.status(400).json({
+      success: false,
+      error: 'No valid phone numbers provided'
     });
   }
 
@@ -730,9 +730,9 @@ app.post('/api/send-bulk-sms', requireAuth, async (req, res) => {
 
   } catch (error) {
     console.error('Bulk SMS Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to queue SMS jobs' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to queue SMS jobs'
     });
   }
 });
@@ -750,5 +750,8 @@ app.get('/api/queue-stats', requireAuth, async (req, res) => {
 // Initialize SMS Worker with Socket.io
 setupSmsWorker(io);
 
+app.get('/', (req, res) => {
+  res.send('Twilio SMS Backend is running.');
+});
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
